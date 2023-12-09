@@ -14,6 +14,11 @@ Make sure you are at `Python 3.10.9` or above.
 ### Setting up Real Time Speech to Text
 TODO
 
+### (STReTS) Speech to text to response to text to speech Demo
+TODO. Make sure you have your ChatGPT key properly in the `.env`
+
+Make sure to run with `export $(cat .env) && python3 demo1.py --model tiny --num-conversational-steps 0`
+
 ## Core Capabilties
 1. Transform speech into text. Be able to see on a terminal or equivalent the text output in real time, or pipe it (either literally or in a library) to a user system.
 2. Be able to use OpenAI ChatGPT to respond to any sort of prompt in a conversational format.
