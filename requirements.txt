@@ -2,5 +2,7 @@ click
 numpy
 torch
 SpeechRecognition
-pyaudio
+# Not sure why sometimes can't build wheels
+# pyaudio
 openai-whisper
+Flask
