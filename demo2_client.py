@@ -1,5 +1,4 @@
-# NOTE - pip install requests opencv-python pygame
-# NOTE not tested or anything!
+# XXX test
 
 import requests
 import cv2
@@ -7,15 +6,27 @@ import numpy as np
 import pygame
 import os
 import tempfile
+import argparse
+import tempfile
 
-def send_mp3_and_receive_mp4(mp3_file_path, url):
+from sys import platform
+
+# My library
+from demo_lib import CSEducationHandler, VoiceConversationHandler
+
+# This is so that we don't get some errors later!
+assert "OPENAI_API_KEY" in os.environ
+assert platform == "darwin"
+
+
+def send_mp3_and_receive_mp4(mp3_file_path: str, url: str) -> str:
     # Send MP3 to server and receive MP4
-    files = {'file': open(mp3_file_path, 'rb')}
+    files = {"file": open(mp3_file_path, "rb")}
     response = requests.post(url, files=files)
 
     if response.status_code == 200:
         # Save the MP4 file to a temporary file
-        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
         temp_file.write(response.content)
         temp_file.close()
         return temp_file.name
@@ -23,7 +34,8 @@ def send_mp3_and_receive_mp4(mp3_file_path, url):
         print("Error in file upload:", response.status_code)
         return None
 
-def play_mp4(mp4_file_path):
+
+def play_mp4(mp4_file_path: str) -> None:
     # Initialize Pygame for audio
     pygame.init()
     pygame.display.set_mode((1, 1))  # Minimal window
@@ -60,9 +72,21 @@ def play_mp4(mp4_file_path):
     cap.release()
     pygame.quit()
 
+
+def main(server_url: str) -> None:
+    pass
+
+
 if __name__ == "__main__":
-    mp3_file_path = 'path/to/your/mp3/file.mp3'  # Replace with your MP3 file path
-    server_url = 'http://localhost:5000/upload'   # Replace with your Flask server URL
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--server_url",
+        help="Server URL which should be able to recieve HTTP and do the mp3 => mp4 stuff",
+        type=str,
+    )
+
+    mp3_file_path = "path/to/your/mp3/file.mp3"  # Replace with your MP3 file path
+    server_url = "http://localhost:5000/upload"  # Replace with your Flask server URL
 
     mp4_file = send_mp3_and_receive_mp4(mp3_file_path, server_url)
     if mp4_file:

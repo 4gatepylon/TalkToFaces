@@ -5,4 +5,9 @@ SpeechRecognition
 # Not sure why sometimes can't build wheels
 # pyaudio
 openai-whisper
+# For the server
 Flask
+# For the client
+requests
+opencv-python
+pygame
