@@ -1,0 +1,4 @@
+.idea
+*.pyc
+# You should use the sample2bmp script
+sample_face.bmp

@@ -162,3 +162,5 @@ cython_debug/
 # Make sure to exlude things that we are getting via our experimentation
 *.mp4
 *.mp3
+
+.DS_Store

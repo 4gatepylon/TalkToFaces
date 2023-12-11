@@ -27,3 +27,5 @@ Make sure to run with `export $(cat .env) && python3 demo1.py --model tiny --num
 5. Be able to animate a 3D character of any kind to do the same as (4), or at least a 2D character that looks good. There are many things to explore after this, such as deepfaking (etc).
 6. Be able to turn this into a full end to end web (or local application) experience that is monetizeable. Try to go out and do some sales and get some traction. It may be smart to read more about, and ideally talk with people in, Character AI and its competitors. Maybe I can scrape their website to gather information about their characters.
 
+## More stuff
+A lot of different models that I am trying to copy from research are here: https://github.com/4gatepylon/FaceFormer. At some point all will be merged into the monorepo.
