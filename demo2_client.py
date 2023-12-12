@@ -1,5 +1,3 @@
-# XXX test
-
 import requests
 import cv2
 import numpy as np
@@ -77,18 +75,22 @@ def main(server_url: str) -> None:
     pass
 
 
+# if __name__ == "__main__":
+#     parser = argparse.ArgumentParser()
+#     parser.add_argument(
+#         "--server_url",
+#         help="Server URL which should be able to recieve HTTP and do the mp3 => mp4 stuff",
+#         type=str,
+#     )
+
+#     mp3_file_path = "path/to/your/mp3/file.mp3"  # Replace with your MP3 file path
+#     server_url = "http://localhost:5000/upload"  # Replace with your Flask server URL
+
+#     mp4_file = send_mp3_and_receive_mp4(mp3_file_path, server_url)
+#     if mp4_file:
+#         play_mp4(mp4_file)
+#         os.remove(mp4_file)  # Clean up the temporary file
+
+# Use this to debug!
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--server_url",
-        help="Server URL which should be able to recieve HTTP and do the mp3 => mp4 stuff",
-        type=str,
-    )
-
-    mp3_file_path = "path/to/your/mp3/file.mp3"  # Replace with your MP3 file path
-    server_url = "http://localhost:5000/upload"  # Replace with your Flask server URL
-
-    mp4_file = send_mp3_and_receive_mp4(mp3_file_path, server_url)
-    if mp4_file:
-        play_mp4(mp4_file)
-        os.remove(mp4_file)  # Clean up the temporary file
+    play_mp4("result-from-server.mp4")
