@@ -1,12 +1,12 @@
-# XXX test
+# TODO(Adriano) how can we improve the whole situation with the audio being out of sync with the video?
 
 import requests
 import cv2
-import numpy as np
+import whisper
 import pygame
 import os
 import tempfile
-import argparse
+import speech_recognition as sr
 from moviepy.editor import VideoFileClip
 import io
 from pathlib import Path
@@ -103,26 +103,51 @@ def play_mp4(mp4_file_path: str) -> None:
     pygame.quit()
 
 
-def main(server_url: str) -> None:
-    pass
+# This should be a server you can get the mp4's from at port 80
+assert "REMOTE_IP" in os.environ
 
 
-# if __name__ == "__main__":
-#     parser = argparse.ArgumentParser()
-#     parser.add_argument(
-#         "--server_url",
-#         help="Server URL which should be able to recieve HTTP and do the mp3 => mp4 stuff",
-#         type=str,
-#     )
+def main() -> None:
+    # TODO(Adriano) don't use defaults, support argparsing, also support the whole platform shit from before
+    model = "tiny.en"
+    audio_model = whisper.load_model(model)
+    energy_threshold = 1000
+    record_timeout = 2
+    phrase_timeout = 3
+    initial_phrase_timeout = 9
+    source = sr.Microphone(sample_rate=16000)
+    default_image_path = "speech-driven-animation-master/sample_face.jpg"
+    default_image = cv2.imread(default_image_path)
 
-#     mp3_file_path = "path/to/your/mp3/file.mp3"  # Replace with your MP3 file path
-#     server_url = "http://localhost:5000/upload"  # Replace with your Flask server URL
+    server_url = os.environ["REMOTE_IP"]
 
-#     mp4_file = send_mp3_and_receive_mp4(mp3_file_path, server_url)
-#     if mp4_file:
-#         play_mp4(mp4_file)
-#         os.remove(mp4_file)  # Clean up the temporary file
+    handler = CSEducationHandler()
+    voiceHandler = VoiceConversationHandler(
+        phrase_timeout,
+        initial_phrase_timeout,
+        energy_threshold,
+        record_timeout,
+        audio_model,
+        source,
+    )
+
+    frame = default_image
+    fps = 60
+    frame_period_real_ms = 1000 / fps
+    frame_period_clipped = int(frame_period_real_ms)
+    while True:
+        cv2.imshow("frame", frame)
+        period = frame_period_clipped
+
+        if cv2.waitKey(period) & 0xFF == ord("q"):
+            break
+
+    cv2.destroy_all_windows
+
+
+if __name__ == "__main__":
+    main()
 
 # Use this to debug!
-if __name__ == "__main__":
-    play_mp4("result-from-server.mp4")
+# if __name__ == "__main__":
+#     play_mp4("result-from-server.mp4")

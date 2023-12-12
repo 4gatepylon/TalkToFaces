@@ -7,18 +7,27 @@ import os
 import speech_recognition as sr
 import whisper
 import time
+from typing import Callable
 
 from sys import platform
 
 # My library
-from demo_lib import CSEducationHandler, VoiceConversationHandler
+from demo_lib import (
+    CSEducationHandler,
+    VoiceConversationHandler,
+    default_response_handler,
+)
 
 # This is so that we don't get some errors later!
 assert "OPENAI_API_KEY" in os.environ
 assert platform == "darwin"
 
 
-def main():
+def main(
+    handle_response: Callable[
+        [str, VoiceConversationHandler], None
+    ] = default_response_handler
+):
     # 1. Define and parse arguments
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -116,7 +125,7 @@ def main():
             contents = voiceHandler.listen()
             print("Responding...")
             response = handler.request(contents)
-            voiceHandler.say(response)
+            handle_response(response, voiceHandler)
             at_step += 1
             time.sleep(0.1)
         except KeyboardInterrupt:

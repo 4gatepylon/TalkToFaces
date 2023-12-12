@@ -8,7 +8,7 @@ import time
 import requests
 from pathlib import Path
 import logging
-
+from gtts import gTTS
 import json
 from datetime import datetime, timedelta
 from queue import Queue
@@ -188,20 +188,20 @@ class CSEducationHandler(ChatGPTConversationHandler):
         super().__init__(CSEducationHandler.SYS_PROMPT)
 
 
-def record_callback(_, audio: sr.AudioData, data_queue: Queue) -> None:
-    """
-    Threaded callback function to receive audio data when recordings finish.
-    audio: An AudioData containing the recorded bytes.
-    """
-    # Grab the raw bytes and push it into the thread safe queue.
-    data = audio.get_raw_data()
-    data_queue.put(data)
-
-
 class VoiceConversationHandler:
     """
     Right now we have a state machine where the program listens to you and then speaks without listening and then starts listening again.
     """
+
+    def record_callback(self, _, audio: sr.AudioData) -> None:
+        """
+        Threaded callback function to receive audio data when recordings finish.
+        audio: An AudioData containing the recorded bytes.
+        """
+        # Grab the raw bytes and push it into the thread safe queue.
+        if self.is_listening:
+            data = audio.get_raw_data()
+            self.data_queue.put(data)
 
     def __init__(
         self,
@@ -213,6 +213,8 @@ class VoiceConversationHandler:
         source: Any,
         # While we develop...
         debug: bool = True,
+        # XXX(Adriano) find a better solution that this for sure!
+        default_mp3_location: Optional[Path] = Path.home() / "Downloads/tmp.mp3",
     ) -> None:
         # Timeouts and thresholds, energy must be at least at energy_threshold to record, it will record forever until silence (based on phrase timeout)
         self.initial_phrase_timeout = initial_phrase_timeout
@@ -238,28 +240,32 @@ class VoiceConversationHandler:
         self.recorder.energy_threshold = energy_threshold
         self.recorder.dynamic_energy_threshold = False
 
-        # Look at comment below, NOTE that since this is threaded we can use non-emptiness of queue as a signal for there
-        # to be new data to consider; NOTE that the queue is used as a TEMPORARY BUFFER and that we use a queue because
-        # there may be more than a single datapoint
-        self.record_callback = lambda _, audio: record_callback(
-            _, audio, self.data_queue
-        )
-
         # Don't spin too fast :P
         self.processor_loop_sleep = 0.1
 
         self.debug = debug
 
+        self.default_mp3_location = default_mp3_location  # XXX
+
+        # State management
+        self.recorder_started = False
+        self.is_listening = False
+
     def listen(self) -> str:
+        self.data_queue.queue.clear()
+        self.is_listening = True  # TODO(Adriano) thread safety
+
         # This is what we'll join in the end
         listened_data: list[str] = []
 
         # 1. Start Recording in a seperate thread
         # Create a background thread that will pass us raw audio bytes.
         # We could do this manually but SpeechRecognizer provides a nice helper.
-        self.recorder.listen_in_background(
-            self.source, self.record_callback, phrase_time_limit=self.record_timeout
-        )
+        if not self.recorder_started:
+            self.recorder.listen_in_background(
+                self.source, self.record_callback, phrase_time_limit=self.record_timeout
+            )
+            self.recorder_started = True
 
         # 2. In this thread, start transcribing and stop once we are finished!
         listen_start_time = datetime.utcnow()
@@ -317,7 +323,33 @@ class VoiceConversationHandler:
         listened_data_merged = " ".join(listened_data)
         if self.debug:
             print(f'LISTENED "{listened_data_merged}"')
+
+        self.data_queue.queue.clear()
+        self.is_listening = True
+
         return listened_data_merged
 
     def say(self, text: str) -> None:
         text2speech(text)
+
+    # NOTE only one of these is allowed at a time! That is really unfortunate :P
+    def get_mp3(
+        self, text: str
+    ) -> Path:  # XXX this should be changed to use some sort of global tempdir state
+        try:
+            self.default_mp3_location.unlink()
+        except FileNotFoundError:
+            pass
+        # TODO(Adriano) support non-english
+        tts = gTTS(text, lang="en")  # You can change the language as needed
+
+        # Save the spoken text to an MP3 file
+        tts.save(self.default_mp3_location.as_posix())
+        return self.default_mp3_location
+
+
+# By default we SAY the repsonse, but alternatively you may choose to say get an mp3 or something from the response
+def default_response_handler(
+    response: str, voiceHandler: VoiceConversationHandler
+) -> None:
+    voiceHandler.say(response)
