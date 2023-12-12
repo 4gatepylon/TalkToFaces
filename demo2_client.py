@@ -1,8 +1,5 @@
-<<<<<<< HEAD
-=======
 # XXX test
 
->>>>>>> 3fad96f28039518e59a7b3184a1e5051623b266e
 import requests
 import cv2
 import numpy as np
@@ -16,21 +13,12 @@ from sys import platform
 
 # My library
 from demo_lib import CSEducationHandler, VoiceConversationHandler
-<<<<<<< HEAD
 
 # This is so that we don't get some errors later!
 assert "OPENAI_API_KEY" in os.environ
 assert platform == "darwin"
 
 
-=======
-
-# This is so that we don't get some errors later!
-assert "OPENAI_API_KEY" in os.environ
-assert platform == "darwin"
-
-
->>>>>>> 3fad96f28039518e59a7b3184a1e5051623b266e
 def send_mp3_and_receive_mp4(mp3_file_path: str, url: str) -> str:
     # Send MP3 to server and receive MP4
     files = {"file": open(mp3_file_path, "rb")}
