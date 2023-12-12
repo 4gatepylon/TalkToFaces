@@ -7,7 +7,9 @@ import pygame
 import os
 import tempfile
 import argparse
-import tempfile
+from moviepy.editor import VideoFileClip
+import io
+from pathlib import Path
 
 from sys import platform
 
@@ -44,30 +46,58 @@ def play_mp4(mp4_file_path: str) -> None:
     cap = cv2.VideoCapture(mp4_file_path)
 
     # Get audio from the same video file
-    pygame.mixer.music.load(mp4_file_path)
-    pygame.mixer.music.play()
+    # Covert to mp3 file in a bytes io first
+    # TODO(just return the mp3)
+    video = VideoFileClip(mp4_file_path)
+    audio = video.audio
+    tmp_mp3 = Path("tmp.mp3")
+    try:
+        tmp_mp3.unlink()
+    except FileNotFoundError:
+        pass
 
+    video.audio.write_audiofile(tmp_mp3.as_posix())
+    pygame.mixer.music.load(tmp_mp3)
+    pygame.mixer.music.play()
+    print("Playing!")
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    print("fps:", fps)
+    fps_down_err = 5
+    print("using fps", fps + fps_down_err)
+    delay_real = 1000 / (fps + fps_down_err)
+    delay_approx = int(delay_real)
+    # delay_accrued_error = 0
+    assert delay_approx <= delay_real
     while cap.isOpened():
         ret, frame = cap.read()
         if not ret:
             break
 
         # Convert the frame color to RGB (OpenCV uses BGR by default)
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        frame = np.rot90(frame)  # Rotate frame
+        # frame = np.rot90(frame)  # Rotate frame
 
-        # Convert frame to Pygame surface and display it
-        frame_surface = pygame.surfarray.make_surface(frame)
-        window = pygame.display.get_surface()
-        window.blit(frame_surface, (0, 0))
-        pygame.display.update()
+        # # Convert frame to Pygame surface and display it
+        # frame_surface = pygame.surfarray.make_surface(frame)
+        # window = pygame.display.get_surface()
+        # window.blit(frame_surface, (0, 0))
+        # pygame.display.update()
 
-        # Check for quit events
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                cap.release()
-                pygame.quit()
-                return
+        # # Check for quit events
+        # for event in pygame.event.get():
+        #     if event.type == pygame.QUIT:
+        #         cap.release()
+        #         pygame.quit()
+        #         return
+        cv2.imshow("frame", frame)
+        this_delay = delay_approx
+        # if delay_accrued_error > 1:
+        #     additional_delay = int(delay_accrued_error)
+        #     this_delay += additional_delay
+        #     delay_accrued_error -= additional_delay
+        #     assert delay_accrued_error < 1
+        # delay_accrued_error += delay_real - delay_approx
+        if cv2.waitKey(this_delay) & 0xFF == ord("q"):
+            break
 
     cap.release()
     pygame.quit()

@@ -11,3 +11,5 @@ Flask
 requests
 opencv-python
 pygame
+pydub
+moviepy
