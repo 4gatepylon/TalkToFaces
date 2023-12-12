@@ -1,5 +1,3 @@
-# XXX test!
-
 from flask import Flask, request, send_file
 import shutil
 from werkzeug.utils import secure_filename

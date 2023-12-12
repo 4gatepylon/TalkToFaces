@@ -12,7 +12,7 @@ from typing import Callable
 from sys import platform
 
 # My library
-from demo_lib import (
+from demo_listen_lib import (
     CSEducationHandler,
     VoiceConversationHandler,
     default_response_handler,

@@ -7,17 +7,21 @@ import torch
 import time
 import requests
 from pathlib import Path
+import uuid
 import logging
 from gtts import gTTS
 import json
+import multiprocessing
+import zipfile
 from datetime import datetime, timedelta
 from queue import Queue
-from sys import platform
+import sys
+import signal
 from typing import Optional, Any
 
 
 def text2speech(text: str) -> None:
-    assert platform == "darwin"
+    assert sys.platform == "darwin"
 
     # https://stackoverflow.com/questions/12758591/python-text-to-speech-in-macintosh
     os.system(f'say "{text}"')
@@ -188,6 +192,74 @@ class CSEducationHandler(ChatGPTConversationHandler):
         super().__init__(CSEducationHandler.SYS_PROMPT)
 
 
+class FileHandler:
+    def __init__(
+        self,
+        dir: Path,
+        max_files: int,
+        extension: str = "mp3",
+        save_zip_name: str = "file-handler-mp3-files",
+    ) -> None:
+        self.dir = dir
+        self.max_files = max_files
+        assert self.dir.exists() and self.dir.is_dir()
+        assert self.max_files >= 1
+
+        self.last_made_files: list[Path] = []
+        self.deleted_files: list[str] = []
+
+        self.extension = extension
+
+        self.save_zip_name = save_zip_name
+        if not self.save_zip_name.endswith(".zip"):
+            self.save_zip_name += ".zip"
+
+    def claim_new_file(self) -> Path:
+        if len(self.last_made_files) >= self.max_files:
+            # NOTE not maximally efficient :P
+            # Delete the oldest file
+            f = self.last_made_files.pop(0)
+            assert (
+                f.exists()
+            )  # NOTE that if you are not creating these files you are kind of trolling and should not be using this file handler like this...
+            f.unlink()
+            self.deleted_files.append(f.name)
+
+        fname = str(uuid.uuid4())
+        fname = fname + "." + self.extension
+        f = self.dir / fname
+        self.last_made_files.append(f)
+        assert len(self.last_made_files) <= self.max_files  # Invariant we keep
+        return f
+
+    def save_all_files_zip_to(self, output_parent_folder: Path) -> None:
+        assert output_parent_folder.exists() and output_parent_folder.is_dir()
+
+        # Create a zip file
+        zip_file = output_parent_folder / self.save_zip_name
+        with zipfile.ZipFile(zip_file, "w") as zip:
+            for f in self.last_made_files:
+                # Make sure to use a flat arcname for simplicity, nothing that the filename may or may not include parent directories
+                zip.write(f.as_posix(), f.name)
+            # Write a new json file for the dictionary below in the zip called hi.json
+            d = {
+                i: {
+                    "file": fname,
+                    "deleted": True,
+                }
+                for i, fname in enumerate(self.deleted_files)
+            }
+            for i, f in enumerate(self.last_made_files):
+                d[i + len(self.deleted_files)] = {
+                    "file": f.name,
+                    "deleted": False,
+                }
+            zip.writestr(
+                "map.json", json.dumps(d, indent=4)
+            )  # This is meant for humans to be able to understand the order in which these were made a little better
+        print(f"Saved zip file to {zip_file.as_posix()}")
+
+
 class VoiceConversationHandler:
     """
     Right now we have a state machine where the program listens to you and then speaks without listening and then starts listening again.
@@ -213,9 +285,20 @@ class VoiceConversationHandler:
         source: Any,
         # While we develop...
         debug: bool = True,
-        # XXX(Adriano) find a better solution that this for sure!
+        # Options for how to deal with mp3 files, note that if you use default_mp3_location that is an ATLERNATIVE and not compatible with filder handler
+        # (and if you must explicitely set it to none, which we do so you cannot be confused later)
         default_mp3_location: Optional[Path] = Path.home() / "Downloads/tmp.mp3",
+        use_file_handler: bool = False,
+        file_handler_tmp_dir: Optional[Path] = None,
+        max_filehandler_files: int = 128,
+        save_on_termination: bool = True,
+        save_to_parent_dir: Path = Path.home(),
+        save_to_zip_name: Path = "tts-faces-file-handler-mp3-files",
     ) -> None:
+        assert (
+            default_mp3_location is None
+        ) == use_file_handler, f"You must either use the default mp3 location or use a file handler, not both: {default_mp3_location}, {use_file_handler}"
+
         # Timeouts and thresholds, energy must be at least at energy_threshold to record, it will record forever until silence (based on phrase timeout)
         self.initial_phrase_timeout = initial_phrase_timeout
         self.phrase_timeout = phrase_timeout
@@ -245,11 +328,34 @@ class VoiceConversationHandler:
 
         self.debug = debug
 
-        self.default_mp3_location = default_mp3_location  # XXX
-
         # State management
         self.recorder_started = False
         self.is_listening = False
+
+        self.default_mp3_location = default_mp3_location
+        self.mp3_file_handler = None
+        if use_file_handler:
+            assert self.default_mp3_location is None
+            assert (
+                file_handler_tmp_dir is not None
+                and file_handler_tmp_dir.exists()
+                and file_handler_tmp_dir.is_dir()
+            )
+            self.mp3_file_handler = FileHandler(
+                file_handler_tmp_dir,
+                max_filehandler_files,
+                extension="mp3",
+                save_zip_name=save_to_zip_name,
+            )
+            if save_on_termination:
+                # Set a response to SIGTERM which is what we are going to send from the parent process to both the playback and the user of this which will be the
+                # recording process
+                def sigterm_handler(
+                    signum, frame
+                ):  # Note sure what the frame is? stack frame?
+                    self.mp3_file_handler.save_all_files_zip_to(save_to_parent_dir)
+
+                signal.signal(signal.SIGTERM, sigterm_handler)
 
     def listen(self) -> str:
         self.data_queue.queue.clear()
@@ -289,7 +395,7 @@ class VoiceConversationHandler:
                 > timedelta(seconds=self.phrase_timeout)
             ):
                 if self.debug:
-                    print("PHRASE TIMEOUT")  # XXX
+                    print("PHRASE TIMEOUT")
                 done_listening = True
             # 2. Process Queue Items
             if self.data_queue.empty():
@@ -333,23 +439,42 @@ class VoiceConversationHandler:
         text2speech(text)
 
     # NOTE only one of these is allowed at a time! That is really unfortunate :P
-    def get_mp3(
-        self, text: str
-    ) -> Path:  # XXX this should be changed to use some sort of global tempdir state
+    def get_mp3(self, text: str, mp3_path: Optional[Path] = None) -> Path:
+        mp3_path = self.default_mp3_location if mp3_path is None else mp3_path
         try:
-            self.default_mp3_location.unlink()
+            mp3_path.unlink()
         except FileNotFoundError:
             pass
         # TODO(Adriano) support non-english
         tts = gTTS(text, lang="en")  # You can change the language as needed
 
         # Save the spoken text to an MP3 file
-        tts.save(self.default_mp3_location.as_posix())
-        return self.default_mp3_location
+        tts.save(mp3_path.as_posix())
+        return mp3_path
 
 
 # By default we SAY the repsonse, but alternatively you may choose to say get an mp3 or something from the response
 def default_response_handler(
-    response: str, voiceHandler: VoiceConversationHandler
+    response: str, voiceHandler: VoiceConversationHandler, *args, **kwargs
 ) -> None:
+    assert len(args) == 0 and len(kwargs) == 0
     voiceHandler.say(response)
+
+
+def save_mp3_response_handler(
+    response: str,
+    voiceHandler: VoiceConversationHandler,
+    queue: multiprocessing.queues.Queue,
+    *args,
+    **kwargs,
+) -> None:
+    assert isinstance(response, str)
+    assert isinstance(voiceHandler, VoiceConversationHandler)
+    assert isinstance(queue, multiprocessing.queues.Queue)
+    assert voiceHandler.mp3_file_handler is not None
+    assert len(args) == 0 and len(kwargs) == 0
+
+    mp3_path = voiceHandler.mp3_file_handler.claim_new_file()
+    mp3_path = voiceHandler.get_mp3(response, mp3_path)
+    assert mp3_path.exists() and mp3_path.is_file()
+    queue.put(mp3_path.as_posix())

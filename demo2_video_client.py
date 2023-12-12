@@ -2,23 +2,93 @@
 
 import requests
 import cv2
-import whisper
 import pygame
 import os
 import tempfile
-import speech_recognition as sr
+import signal
+import multiprocessing
+import numpy as np
 from moviepy.editor import VideoFileClip
-import io
 from pathlib import Path
 
-from sys import platform
 
-# My library
-from demo_lib import CSEducationHandler, VoiceConversationHandler
+def play_frames(
+    frames: list[np.ndarray], fperiod: int, exit_keys: str = [ord("q"), 27]
+) -> bool:
+    """Play a sequence of frames and return whether to exit or not. One key is assumed to be the exit key. Default exit keys are q and esc (27)."""
+    for frame in frames:
+        cv2.imshow("frame", frame)
+        if cv2.waitKey(fperiod) & 0xFF in exit_keys:
+            return True
+    return False
 
-# This is so that we don't get some errors later!
-assert "OPENAI_API_KEY" in os.environ
-assert platform == "darwin"
+
+# Just play an mp4's video portion on loop
+# NOTE that this is useful to debug!
+def cv2_spinner_proc_main(
+    # IPC Communication
+    tts_mp3_queue: multiprocessing.Queue,
+    playback_completion_event: multiprocessing.Event,
+    end_convo_event: multiprocessing.Event,
+) -> None:
+    # Collect all the frames
+    mp4_file_path = Path("~/Downloads/generated.mp4").expanduser()
+    cap = cv2.VideoCapture(mp4_file_path.as_posix())
+    num_frames = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+    assert num_frames == float(int(num_frames))
+    num_frames = int(num_frames)
+
+    frames = [None] * num_frames
+    for fidx in range(num_frames):
+        ret, frame = cap.read()
+        if not ret:
+            break
+        frames[fidx] = frame
+
+    # Get framerate and choose a little it of time to just stop
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    fperiod_ms = 1000 / fps
+    fperiod_clipped_ms = int(fperiod_ms)
+    wait_after_video_period_ms = 1000
+    wait_after_video_period_clipped_ms = int(wait_after_video_period_ms)
+
+    cap.release()
+
+    # Keep playing the video on loop
+    playing = True
+
+    # You may or may not want to do this?
+    # def kill_cv2(signum, frame):
+    #     print("Killing cv2")
+    #     cv2.destroyAllWindows()
+
+    # signal.signal(signal.SIGTERM, kill_cv2)
+    while playing:
+        # Block until we have the mp3 filename or everything is over
+        # print("--- (video client) --- checking if done with convo") # Debug - can logspam tho
+        if end_convo_event.is_set():
+            # print("--- (video client) --- done with convo") # Debug - can logspam tho
+            playing = False
+            break  # Redunant I guess?
+        # print("--- (video client) --- waiting for mp3 filename") # Debug - can logspam tho
+        try:
+            mp3_filename = tts_mp3_queue.get(timeout=0.1)
+            assert Path(mp3_filename).exists()
+
+            # XXX do the whole server communication shit
+            print("--- (video client) --- playing frames")
+            if play_frames(frames, fperiod_clipped_ms):
+                break
+            cv2.waitKey(wait_after_video_period_clipped_ms)
+
+            # Signal listening to recommence
+            print("--- (video client) --- playback compelete")
+            playback_completion_event.set()
+        except multiprocessing.queues.Empty:
+            pass  # Nothing happening here
+
+    cv2.destroyAllWindows()
+    print("--- (video client) --- Done destroying cv2 windows!")
 
 
 def send_mp3_and_receive_mp4(mp3_file_path: str, url: str) -> str:
@@ -101,53 +171,3 @@ def play_mp4(mp4_file_path: str) -> None:
 
     cap.release()
     pygame.quit()
-
-
-# This should be a server you can get the mp4's from at port 80
-assert "REMOTE_IP" in os.environ
-
-
-def main() -> None:
-    # TODO(Adriano) don't use defaults, support argparsing, also support the whole platform shit from before
-    model = "tiny.en"
-    audio_model = whisper.load_model(model)
-    energy_threshold = 1000
-    record_timeout = 2
-    phrase_timeout = 3
-    initial_phrase_timeout = 9
-    source = sr.Microphone(sample_rate=16000)
-    default_image_path = "speech-driven-animation-master/sample_face.jpg"
-    default_image = cv2.imread(default_image_path)
-
-    server_url = os.environ["REMOTE_IP"]
-
-    handler = CSEducationHandler()
-    voiceHandler = VoiceConversationHandler(
-        phrase_timeout,
-        initial_phrase_timeout,
-        energy_threshold,
-        record_timeout,
-        audio_model,
-        source,
-    )
-
-    frame = default_image
-    fps = 60
-    frame_period_real_ms = 1000 / fps
-    frame_period_clipped = int(frame_period_real_ms)
-    while True:
-        cv2.imshow("frame", frame)
-        period = frame_period_clipped
-
-        if cv2.waitKey(period) & 0xFF == ord("q"):
-            break
-
-    cv2.destroy_all_windows
-
-
-if __name__ == "__main__":
-    main()
-
-# Use this to debug!
-# if __name__ == "__main__":
-#     play_mp4("result-from-server.mp4")
