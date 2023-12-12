@@ -6,6 +6,7 @@ import whisper
 import speech_recognition as sr
 import time
 from typing import Callable, Optional, Any
+import multiprocessing
 
 # My imports
 from demo_lib import (
@@ -142,7 +143,29 @@ def tts_responder(
 
 
 # cv2_spinner()
+# tts_responder()
+if __name__ == "__main__":
+    cv2_process = multiprocessing.Process(target=cv2_spinner, args=())
+    tts_process = multiprocessing.Process(target=tts_responder, args=())
 
-tts_responder()
+    # Set as daemon processes so that they cannot spawn there own AND they are automatically to be terminated if this is terminated
+    cv2_process.daemon = True
+    tts_process.daemon = True
+
+    cv2_process.start()
+    tts_process.start()
+
+    # If you don't run this then the processes will automatically shut down since the parent dies
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("Terminating...")
+        # This does seem to be redundant but I guess doesn't hurt; was suggested by ChatGPT
+        cv2_process.terminate()
+        tts_process.terminate()
+        cv2_process.join()
+        tts_process.join()
+
 
 # XXX launch the other two subprocesses
