@@ -249,20 +249,31 @@ if __name__ == "__main__":
     # NOTE that the zipfile save will occur in the recording_process terminate call and therefore will happen BEFORE we cleanup the tempdir as it should
     with tempfile.TemporaryDirectory() as tempdir:
         mp3_tempdir = Path(tempdir) / "mp3"
+        mp4_tempdir = Path(tempdir) / "mp4"  # returned by server
         mp3_tempdir.mkdir()
+        mp4_tempdir.mkdir()
 
         # Queue that is always read
         tts_mp3_queue = multiprocessing.Queue()
         playback_completion_event = multiprocessing.Event()
         end_convo_event = multiprocessing.Event()
 
+        # TODO(Adriano) standardize names next time around
         # Recording process will always be running and alternate between recording and sleeping (during which the playback process will be running)
         # Playback process will always be running and will just show the image until the image is speaking, then it will fetch the video from the server and play it seamlessly
         # into the same window. When it is done, it signals the recording to proess to record anew
         playback_process = multiprocessing.Process(
+            # Swap with comment for debug
+            # target=cv2_spinner_proc_main,
+            # args=(
+            #     tts_mp3_queue,
+            #     playback_completion_event,
+            #     end_convo_event,
+            # ),
             target=cv2_spinner_proc_main,
             args=(
                 tts_mp3_queue,
+                mp4_tempdir,
                 playback_completion_event,
                 end_convo_event,
             ),

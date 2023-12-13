@@ -2,72 +2,69 @@ from flask import Flask, request, send_file
 import shutil
 from werkzeug.utils import secure_filename
 from pathlib import Path
+import tempfile
 
 import sda  # NOTE this is from the speech-driven-animation shit
 
 app = Flask(__name__)
 
-# NOTE save all the mp3 files to ~/mp3/server
-
-# This is a simple server that takes in an mp3 file and then uses the speech-driven-animation repository to
-# turn it into an MP4 of an image (that is the hardcoded image for now: the bmp) to create an MP4 video of
-# that image (supposed to be a head) saying those words.
-
-
-def allowed_file(filename):
-    return "." in filename and filename.rsplit(".", 1)[1].lower() in ["mp3"]
+# This is a simple server that takes in an mp3 file + image and then turns them into an MP4 using our system
 
 
 # To test do (assuming you've done export REMOTE_IP=... and have audiocapture.mp3 in .)
-# "curl -X POST -F "file=@audiocapture.mp3" http://$REMOTE_IP/convert -o result-from-server.mp4"
+# "curl -X POST -F "image=@speech-driven-animation-master/sample_face.bmp" -F "audio=@audiocapture.mp3" http://$REMOTE_IP/convert -o result-from-server.mp4"
 @app.route("/convert", methods=["POST"])
 def upload_file():
-    if "file" not in request.files:
+    if "image" not in request.files or "audio" not in request.files:
         return "No file part", 400
 
-    file = request.files["file"]
-    if file.filename == "":
+    image_file = request.files["image"]
+    if image_file.filename == "":
         return "No selected file", 400
+    audio_file = request.files["audio"]
+    if audio_file.filename == "":
+        return "No selected file", 400
+    if not image_file.filename.endswith(".bmp"):
+        return "Image file must be a bmp", 400
+    if not audio_file.filename.endswith(".mp3"):
+        return "Audio file must be an mp3", 400
+    print("Got files")  # Debug
 
-    print("Got file")  # Debug
+    # We will create an MP4 in a specific file and send it back
+    with tempfile.TemporaryDirectory() as tempdir:
+        tempdir = Path(tempdir)
+        mp3_filepath = tempdir / "audio.mp3"
+        bmp_filepath = tempdir / "image.bmp"
+        mp4_filepath = tempdir / "result.mp4"
 
-    if file and allowed_file(file.filename):
-        filename = secure_filename(file.filename)
-        # Saving file to path
-        print("Saving file to path")
-        mp3_server_path = (
-            Path("/home/adriano") / "mp3-server"
-        )  # TODO(Adriano) don't just hard-code this plz
-        shutil.rmtree(mp3_server_path.as_posix(), ignore_errors=True)
-        mp3_server_path.mkdir(parents=True, exist_ok=True)
-        mp3_path = mp3_server_path / filename
-        file.save(mp3_path.as_posix())
-        assert mp3_path.exists()
-        print("\n".join((x.as_posix() for x in mp3_server_path.iterdir())))  # Debug
+        print("Saving file to path")  # Debug
+        image_file.save(bmp_filepath.as_posix())
+        assert bmp_filepath.exists()
+        audio_file.save(mp3_filepath.as_posix())
+        assert mp3_filepath.exists()
+
+        ### Debug ###
+        print("Tempdir:")
+        print("\n".join((x.as_posix() for x in tempdir.iterdir())))  # Debug
         print("Done!")
+        ### ...
 
         # Now create the mp3
         print("Instantiating Video Animator")
         va = sda.VideoAnimator(gpu=0)  # Instantiate the animator
         print("Running...")
+        # Seems to work OK with MP3's
         vid, aud = va(
-            "speech-driven-animation-master/sample_face.bmp",
-            # "speech-driven-animation-master/sample_audio.wav",
-            mp3_path.as_posix(),
+            bmp_filepath.as_posix(),
+            mp3_filepath.as_posix(),
         )  # NOTE this is hardcoded
         print("Saving video!")
-        genpath = Path(
-            "/home/adriano/generated.mp4"
-        ).expanduser()  # TODO(Adriano) don't hardcode this!
-        try:
-            genpath.unlink()
-        except FileNotFoundError:
-            pass
-        va.save_video(vid, aud, genpath.as_posix())
-        print(f"Done (in {genpath.as_posix()})")
+        va.save_video(vid, aud, mp4_filepath.as_posix())
+        assert mp4_filepath.exists() and mp4_filepath.is_posix()
+        print(f"Done (in {mp4_filepath.as_posix()})")
 
         # Don't clear anything yet so we can debug
-        return send_file(genpath.as_posix(), as_attachment=True)
+        return send_file(mp4_filepath.as_posix(), as_attachment=True)
 
 
 # To test just do regular old curl to the /ping endpoint on port 80
