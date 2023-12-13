@@ -298,6 +298,7 @@ def frame_player_proc_main(*args, **kwargs) -> None:
 
 # NOTE this is for Debug and you should use it to make sure the server is behaving nominally!
 if __name__ == "__main__":
+    print("Running video client fetch test!")
 
     def play_mp4(mp4_file_path: str, tmpdir: Path) -> None:
         # Initialize Pygame for audio
@@ -344,6 +345,6 @@ if __name__ == "__main__":
                 f.write(mp4_bytes)
             assert mp4_filepath.exists() and mp4_filepath.is_file()
             print(f"Done (in {mp4_filepath.as_posix()})")
-            play_mp4(mp4_filepath.as_posix())
+            play_mp4(mp4_filepath.as_posix(), tempdir)
 
     asyncio.run(test_main())
