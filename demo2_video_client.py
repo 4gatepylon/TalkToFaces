@@ -210,7 +210,6 @@ async def frame_player_proc_main_async(
     with tempfile.TemporaryDirectory() as mp3_recv_tempdir:
         mp3_recv_tempdir = Path(mp3_recv_tempdir)
         while True:
-            frame = None
             if end_convo_event.is_set():  # Done
                 break  # If we are signalled to end the whole proc then end
             elif (
@@ -240,7 +239,8 @@ async def frame_player_proc_main_async(
 
                     print("--- (video client) --- awaital done!")
                 else:
-                    frame = default_image
+                    cv2.imshow(window_name, default_image)
+                    k = cv2.waitKey(fperiod_clipped_ms)
             elif playing_mp4_response:  # Next frame to play
                 assert playing_frame_number < len(playing_frames)
                 frame = playing_frames[playing_frame_number]
@@ -333,7 +333,7 @@ if __name__ == "__main__":
         contents = asyncio.ensure_future(
             recv_mp4(
                 Path("speech-driven-animation-master/sample_face.bmp"),
-                Path("speech-driven-animation-master/audiocapture.mp3").expanduser(),
+                Path("audiocapture.mp3"),
             )
         )
         with tempfile.TemporaryDirectory() as tempdir:
@@ -342,7 +342,7 @@ if __name__ == "__main__":
             mp4_bytes = await contents
             with open(mp4_filepath.as_posix(), "wb") as f:
                 f.write(mp4_bytes)
-            assert mp4_filepath.exists() and mp4_filepath.is_posix()
+            assert mp4_filepath.exists() and mp4_filepath.is_file()
             print(f"Done (in {mp4_filepath.as_posix()})")
             play_mp4(mp4_filepath.as_posix())
 

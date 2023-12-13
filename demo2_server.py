@@ -60,7 +60,7 @@ def upload_file():
         )  # NOTE this is hardcoded
         print("Saving video!")
         va.save_video(vid, aud, mp4_filepath.as_posix())
-        assert mp4_filepath.exists() and mp4_filepath.is_posix()
+        assert mp4_filepath.exists() and mp4_filepath.is_file()
         print(f"Done (in {mp4_filepath.as_posix()})")
 
         # Don't clear anything yet so we can debug
