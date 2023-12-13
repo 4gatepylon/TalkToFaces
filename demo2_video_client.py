@@ -7,11 +7,13 @@ import os
 import tempfile
 import aiohttp
 import asyncio
+import time
 import multiprocessing
 import signal
 import numpy as np
 from moviepy.editor import VideoFileClip
 from pathlib import Path
+from typing import Optional
 
 # File handler is used by both!
 from demo_listen_lib import FileHandler
@@ -72,7 +74,7 @@ def get_frames_from_mp4(mp4_filepath: Path) -> list[np.ndarray]:
 
 def play_audio_from_mp4(mp4_filepath: Path, mp3_tempdir: Path) -> None:
     assert mp3_tempdir.exists() and mp3_tempdir.is_dir()
-    video = VideoFileClip(mp4_filepath)
+    video = VideoFileClip(mp4_filepath.as_posix())
     audio = video.audio
     mp3_path = mp3_tempdir / "audio.mp3"
     try:
@@ -156,6 +158,116 @@ def cv2_spinner_proc_main(
     print("--- (video client) --- Done destroying cv2 windows!")
 
 
+### Helper for the stuff below ###
+async def await_tts_mp3_filename(
+    tts_mp3_queue: multiprocessing.Queue,
+    end_convo_event: multiprocessing.Event,
+    # CV2 display
+    default_image: np.ndarray,
+    window_name: str,
+) -> tuple[Optional[tuple[Path, Path]], bool]:
+    """Return paths to mp3 and bmp (or none) and whether exit signal was sent."""
+
+    # Just loop until we recieve an mp3 filename from the listener tts process
+    while True:
+        if end_convo_event.is_set():
+            return None, True
+        try:
+            # If a new MP3 is available, we are now going to try to play it
+            mp3_filename = tts_mp3_queue.get(timeout=0.1)
+            assert Path(mp3_filename).exists()
+            bmp_filename = os.environ["FACE"]
+            assert Path(bmp_filename).exists()
+            return (Path(mp3_filename), Path(bmp_filename)), False
+
+        except multiprocessing.queues.Empty:
+            # Just  display the default image
+            # Wait 1 ms i.e. very very little, but just enough to DISPLAY
+            cv2.imshow(window_name, default_image)
+            cv2.waitKey(1)
+
+    # Should never make it here
+    raise RuntimeError("Unreachable code")
+
+
+async def await_mp4_response(
+    end_convo_event: multiprocessing.Event,
+    bmp_filename: Path,
+    mp3_filename: Path,
+    mp4_file_handler: FileHandler,
+    # CV2 display
+    default_image: np.ndarray,
+    window_name: str,
+) -> tuple[Optional[Path], bool]:
+    # Launch a network request
+    print(" --- (video client) --- commencing mp4 awaital")
+    awaiting_mp4_promise = asyncio.ensure_future(
+        recv_mp4(
+            Path(bmp_filename),
+            Path(mp3_filename),
+        )
+    )
+
+    # Wait forr the network request and display the relevant (default) image
+    print("--- (video client) --- awaital bombs away!")
+    while not awaiting_mp4_promise.done():
+        if end_convo_event.is_set():
+            return None, True
+        # Make sure to wait a little to give async http a chance to do its thing
+        await asyncio.sleep(0.1)
+        # Just as before make sure we display, might be blocking so keep it minimal
+        cv2.imshow(window_name, default_image)
+        cv2.waitKey(1)
+
+    # Write to a tempfile so the next step can use this
+    print("--- (video client) --- awaital done!")
+    mp4_filename = write_mp4_to_tempfile(
+        awaiting_mp4_promise.result(), mp4_file_handler
+    )
+    return mp4_filename, False
+
+
+async def play_mp4_response(
+    end_convo_event: multiprocessing.Event,
+    mp4_filepath: Path,
+    playback_completion_event: multiprocessing.Event,
+    mp3_recv_tempdir: Path,
+    # CV2 display
+    window_name: str,
+    default_image: np.ndarray,
+    # Give it a little time to finish audio
+    wait_after_period: float,
+) -> bool:
+    playing_frames, fps = get_frames_from_mp4(mp4_filepath)
+    fperiod = 1000 / fps
+    fperiod_clipped_ms = int(fperiod)
+
+    # Launch side-effect of playing audio and play the frames 1 by 1
+    play_audio_from_mp4(mp4_filepath, mp3_recv_tempdir)
+    for frame in playing_frames:
+        if end_convo_event.is_set():
+            return True
+        cv2.imshow(window_name, frame)
+        cv2.waitKey(fperiod_clipped_ms)
+
+    # Wait as little bit at the end since the audio might still be playing or generally we want to make sure things end in a clear fashion
+    sample_end_period = 0.1
+    start_time = time.time()
+    while time.time() - start_time < wait_after_period:
+        if end_convo_event.is_set():
+            return True
+        cv2.imshow(window_name, default_image)
+        cv2.waitKey(1)
+
+    # Signal the tts and listener to listen to us again
+    playback_completion_event.set()
+    return False
+
+
+###
+
+
+### Main function ###
 async def frame_player_proc_main_async(
     # IPC Communication
     tts_mp3_queue: multiprocessing.Queue,
@@ -181,7 +293,7 @@ async def frame_player_proc_main_async(
     assert default_image is not None
 
     mp4_file_handler = FileHandler(
-        mp4_tempdir, max_mp4s, extension="mp4", zip_name=save_mp4s_zip_name
+        mp4_tempdir, max_mp4s, extension="mp4", save_zip_name=save_mp4s_zip_name
     )
 
     # Establish that mp4s are to be saved on exit
@@ -190,115 +302,70 @@ async def frame_player_proc_main_async(
 
     signal.signal(signal.SIGTERM, sigterm_handler)
 
-    # NOTE that the fps may change if we recieve an mp4 with a different fps
-    default_fps = 60
-    default_fperiod_ms = 1000 / default_fps
-    default_fperiod_clipped_ms = int(default_fperiod_ms)
-    fperiod_clipped_ms = default_fperiod_clipped_ms
-    wait_after_video_period_ms = 3000  # Usually deals with any overflow from the error TODO(Adriano) fix this maybe?
-    wait_after_video_period_clipped_ms = int(wait_after_video_period_ms)
+    # CV2 window
+    window = "frame"
 
-    window_name = "frame"  # Window management # XXX use this!
+    # Ease of life
+    wait_after_period = 1  # 1 sec
 
-    awaiting_mp4_response = False  # State management
-    awaiting_mp4_promise = None  # State management
-
-    playing_mp4_response = False
-    playing_frame_number = None
-    playing_frames = None
     # TODO(Adriano) don't use this ugly mp3 tempdir shit
     with tempfile.TemporaryDirectory() as mp3_recv_tempdir:
         mp3_recv_tempdir = Path(mp3_recv_tempdir)
+
         while True:
-            if end_convo_event.is_set():  # Done
-                break  # If we are signalled to end the whole proc then end
-            elif (
-                awaiting_mp4_response
-            ):  # Default image frame or first frame (technically superfluous)
-                assert not playing_mp4_response
-                assert awaiting_mp4_promise is not None
-                if awaiting_mp4_promise.done():
-                    print("--- (video client) --- recv response, write file")
-                    mp4_filename = write_mp4_to_tempfile(
-                        awaiting_mp4_promise.result(), mp4_file_handler
-                    )
-                    awaiting_mp4_response = False
-                    playing_mp4_response = True
-                    awaiting_mp4_promise = None
-                    playing_frame_number = 0
-                    playing_frames, fps = get_frames_from_mp4(mp4_filename)
-                    fperiod = 1000 / fps
-                    fperiod_clipped_ms = int(fperiod)  # NOTE we overwrite the fperiod!
-
-                    # TODO(Adraino) fix unimportant bug where we play twice
-                    frame = playing_frames[playing_frame_number]
-
-                    # NOTE side-effect to start playing audio! (This is the reason we had to switch to the fps
-                    # specifically from the mp4... not sure how to better coordinate though)
-                    play_audio_from_mp4(mp4_filename, mp3_recv_tempdir)
-
-                    print("--- (video client) --- awaital done!")
-                else:
-                    cv2.imshow(window_name, default_image)
-                    k = cv2.waitKey(fperiod_clipped_ms)
-            elif playing_mp4_response:  # Next frame to play
-                assert playing_frame_number < len(playing_frames)
-                frame = playing_frames[playing_frame_number]
-                playing_frame_number += 1
-                if playing_frame_number == len(playing_frames):
-                    playing_mp4_response = False
-                    playing_frame_number = None
-                    playing_frames = None
-                    fperiod_clipped_ms = default_fperiod_clipped_ms
-                    print("--- (video client) --- playback compelete")
-                    # TODO(Adriano) not really clean to do this HERE
-                    # wait those 3 sec for done speaking
-                    cv2.waitKey(wait_after_video_period_clipped_ms)
-                    playback_completion_event.set()
-            else:  # Default image frame
-                frame = default_image
-                try:
-                    # If a new MP3 is available, we are now going to try to play it
-                    mp3_filename = tts_mp3_queue.get(timeout=0.1)
-                    assert Path(mp3_filename).exists()
-                    bmp_filename = os.environ["FACE"]
-                    assert Path(bmp_filename).exists()
-                    assert not awaiting_mp4_response
-                    assert not playing_mp4_response
-                    assert awaiting_mp4_promise is None
-
-                    print(" --- (video client) --- commencing mp4 awaital")
-                    awaiting_mp4_response = True
-                    awaiting_mp4_promise = asyncio.ensure_future(
-                        recv_mp4(
-                            Path(bmp_filename),
-                            Path(mp3_filename),
-                        )
-                    )
-                except multiprocessing.queues.Empty:
-                    pass  # Nothing happening here
-            assert frame is not None
-            cv2.imshow(window_name, frame)
-            k = cv2.waitKey(fperiod_clipped_ms)
-            # Exit on q or 27
-            if k & 0xFF == ord("q") or k == 27:
-                # NOTE you shouldn't actually use this though, it doesn't really work :P
-                # TODO(Adriano) add support for this (if you do, you'll just be doing TTS
-                # side and so it'll block forever)
+            (mp3_filename, bmp_filename), done = await await_tts_mp3_filename(
+                tts_mp3_queue,
+                end_convo_event,
+                # CV2 display
+                default_image,
+                window,
+            )
+            if done:
+                break
+            assert mp3_filename is not None
+            mp4_filename, done = await await_mp4_response(
+                end_convo_event,
+                bmp_filename,
+                mp3_filename,
+                mp4_file_handler,
+                # CV2 display
+                default_image,
+                window,
+            )
+            if done:
+                break
+            done = await play_mp4_response(
+                end_convo_event,
+                mp4_filename,
+                playback_completion_event,
+                mp3_recv_tempdir,
+                # CV2 display
+                window,
+                default_image,
+                # Give it a little time to finish audio
+                wait_after_period,
+            )
+            if done:
                 break
 
+        print("--- (video client) --- Done!")
         cv2.destroyAllWindows()
         print("--- (video client) --- Done destroying cv2 windows!")
 
 
-# Wrapper for asyncio
+###
+
+
+### Wrapper for asyncio ###
 def frame_player_proc_main(*args, **kwargs) -> None:
     return asyncio.run(frame_player_proc_main_async(*args, **kwargs))
 
 
+###
+
 # NOTE this is for Debug and you should use it to make sure the server is behaving nominally!
 if __name__ == "__main__":
-    print("Running video client fetch test!")
+    print(" --- (video client MAIN) --- Running video client fetch test!")
 
     def play_mp4(mp4_file_path: str, tmpdir: Path) -> None:
         # Initialize Pygame for audio
@@ -344,7 +411,7 @@ if __name__ == "__main__":
             with open(mp4_filepath.as_posix(), "wb") as f:
                 f.write(mp4_bytes)
             assert mp4_filepath.exists() and mp4_filepath.is_file()
-            print(f"Done (in {mp4_filepath.as_posix()})")
+            print(f" --- (video client MAIN) --- Done (in {mp4_filepath.as_posix()})")
             play_mp4(mp4_filepath.as_posix(), tempdir)
 
     asyncio.run(test_main())

@@ -20,7 +20,10 @@ from demo_listen_lib import (
 )
 
 # cv2_spinner is a test, it is meant to basically play videos once it gets mp3s without talking to the server or really doing anything (state management testing)
-from demo2_video_client import cv2_spinner_proc_main
+from demo2_video_client import (
+    # cv2_spinner_proc_main,
+    frame_player_proc_main,
+)
 
 from constants import (
     DEFAULT_MODEL,
@@ -270,7 +273,7 @@ if __name__ == "__main__":
             #     playback_completion_event,
             #     end_convo_event,
             # ),
-            target=cv2_spinner_proc_main,
+            target=frame_player_proc_main,
             args=(
                 tts_mp3_queue,
                 mp4_tempdir,
