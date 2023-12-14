@@ -13,3 +13,4 @@ opencv-python
 pygame
 pydub
 moviepy
+pillow-heif

@@ -1,8 +1,13 @@
-import requests
 import cv2
 import pygame
 import os
 import tempfile
+from PIL import Image
+from pillow_heif import register_heif_opener
+
+# https://stackoverflow.com/questions/54395735/how-to-work-with-heic-image-file-types-in-python
+register_heif_opener()
+
 import aiohttp
 import asyncio
 import time
@@ -160,11 +165,12 @@ def cv2_spinner_proc_main(
 async def await_tts_mp3_filename(
     tts_mp3_queue: multiprocessing.Queue,
     end_convo_event: multiprocessing.Event,
+    bmp_filename: Path,
     # CV2 display
     default_image: np.ndarray,
     window_name: str,
-) -> tuple[Optional[tuple[Path, Path]], bool]:
-    """Return paths to mp3 and bmp (or none) and whether exit signal was sent."""
+) -> tuple[Optional[Path], bool]:
+    """Return pathto mp3 (or none) and whether exit signal was sent."""
 
     # Just loop until we recieve an mp3 filename from the listener tts process
     while True:
@@ -174,9 +180,7 @@ async def await_tts_mp3_filename(
             # If a new MP3 is available, we are now going to try to play it
             mp3_filename = tts_mp3_queue.get(timeout=0.1)
             assert Path(mp3_filename).exists()
-            bmp_filename = os.environ["FACE"]
-            assert Path(bmp_filename).exists()
-            return (Path(mp3_filename), Path(bmp_filename)), False
+            return Path(mp3_filename), False
 
         except multiprocessing.queues.Empty:
             # Just  display the default image
@@ -265,6 +269,13 @@ async def play_mp4_response(
 ###
 
 
+def convert2bmp(jpeg_file: Path, bmp_file: Path):
+    # Open the JPEG file
+    with Image.open(jpeg_file.as_posix()) as img:
+        # Save as BMP
+        img.save(bmp_file.as_posix(), "BMP")
+
+
 ### Main function ###
 async def frame_player_proc_main_async(
     # IPC Communication
@@ -282,73 +293,79 @@ async def frame_player_proc_main_async(
     assert mp4_tempdir.exists()
     assert mp4_tempdir.is_dir()
     assert "REMOTE_IP" in os.environ
-    assert "FACE" in os.environ and os.environ["FACE"].endswith(".bmp")
 
     # Alternative not supported for now :P
     assert save_mp4s
 
-    default_image = cv2.imread(os.environ["FACE"])
-    assert default_image is not None
+    # TODO(Adriano) less tempdirs
+    with tempfile.TemporaryDirectory() as bmp_tempdir:
+        print("--- (video client) --- converting heic to bmp")
+        bmp_tempdir = Path(bmp_tempdir)
+        bmp_filename = bmp_tempdir / "face.bmp"
+        convert2bmp(Path(os.environ["FACE"]).expanduser().resolve(), bmp_filename)
+        default_image = cv2.imread(bmp_filename.as_posix())
+        assert default_image is not None
 
-    mp4_file_handler = FileHandler(
-        mp4_tempdir, max_mp4s, extension="mp4", save_zip_name=save_mp4s_zip_name
-    )
+        mp4_file_handler = FileHandler(
+            mp4_tempdir, max_mp4s, extension="mp4", save_zip_name=save_mp4s_zip_name
+        )
 
-    # Establish that mp4s are to be saved on exit
-    def sigterm_handler(signum, frame):  # Note sure what the frame is? stack frame?
-        mp4_file_handler.save_all_files_zip_to(save_to_parent_dir)
+        # Establish that mp4s are to be saved on exit
+        def sigterm_handler(signum, frame):  # Note sure what the frame is? stack frame?
+            mp4_file_handler.save_all_files_zip_to(save_to_parent_dir)
 
-    signal.signal(signal.SIGTERM, sigterm_handler)
+        signal.signal(signal.SIGTERM, sigterm_handler)
 
-    # CV2 window
-    window = "frame"
+        # CV2 window
+        window = "frame"
 
-    # Ease of life
-    wait_after_period = 1  # 1 sec
+        # Ease of life
+        wait_after_period = 1  # 1 sec
 
-    # TODO(Adriano) don't use this ugly mp3 tempdir shit
-    with tempfile.TemporaryDirectory() as mp3_recv_tempdir:
-        mp3_recv_tempdir = Path(mp3_recv_tempdir)
+        # TODO(Adriano) don't use this ugly mp3 tempdir shit
+        with tempfile.TemporaryDirectory() as mp3_recv_tempdir:
+            mp3_recv_tempdir = Path(mp3_recv_tempdir)
 
-        while True:
-            (mp3_filename, bmp_filename), done = await await_tts_mp3_filename(
-                tts_mp3_queue,
-                end_convo_event,
-                # CV2 display
-                default_image,
-                window,
-            )
-            if done:
-                break
-            assert mp3_filename is not None
-            mp4_filename, done = await await_mp4_response(
-                end_convo_event,
-                bmp_filename,
-                mp3_filename,
-                mp4_file_handler,
-                # CV2 display
-                default_image,
-                window,
-            )
-            if done:
-                break
-            done = await play_mp4_response(
-                end_convo_event,
-                mp4_filename,
-                playback_completion_event,
-                mp3_recv_tempdir,
-                # CV2 display
-                window,
-                default_image,
-                # Give it a little time to finish audio
-                wait_after_period,
-            )
-            if done:
-                break
+            while True:
+                mp3_filename, done = await await_tts_mp3_filename(
+                    tts_mp3_queue,
+                    end_convo_event,
+                    bmp_filename,
+                    # CV2 display
+                    default_image,
+                    window,
+                )
+                if done:
+                    break
+                assert mp3_filename is not None
+                mp4_filename, done = await await_mp4_response(
+                    end_convo_event,
+                    bmp_filename,
+                    mp3_filename,
+                    mp4_file_handler,
+                    # CV2 display
+                    default_image,
+                    window,
+                )
+                if done:
+                    break
+                done = await play_mp4_response(
+                    end_convo_event,
+                    mp4_filename,
+                    playback_completion_event,
+                    mp3_recv_tempdir,
+                    # CV2 display
+                    window,
+                    default_image,
+                    # Give it a little time to finish audio
+                    wait_after_period,
+                )
+                if done:
+                    break
 
-        print("--- (video client) --- Done!")
-        cv2.destroyAllWindows()
-        print("--- (video client) --- Done destroying cv2 windows!")
+            print("--- (video client) --- Done!")
+            cv2.destroyAllWindows()
+            print("--- (video client) --- Done destroying cv2 windows!")
 
 
 ###
