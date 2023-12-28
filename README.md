@@ -1,6 +1,11 @@
-# MeruCharacterAIDemo
+# TalkToFaces
 A Series of demos that do character.ai-like functionality i which you can talk to a character. These are not meant for production.
 
+To set up, run the server on your favorite (GPU) instance (T4s work) on GCP and then using the public HTTP port (make sure that it is open) you can communicate from the other demo. You must have an OpenAI token and a couple other things self-explanatory in the code (ask adriano).
+
+It works, but might look very bad with some faces.
+
+# Old Notes
 
 ## How to set up (on Mac)
 We will use a speech recognition library that is already used using open source tools: https://github.com/Uberi/speech_recognition#readme. Specifically, we'll be using whisper. Make sure to follow all the tutorials there and here: https://github.com/openai/whisper (to get set up).
